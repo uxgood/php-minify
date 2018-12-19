@@ -1,6 +1,63 @@
 #!/usr/bin/env php
 <?php
 
+/**
+ * @Annotation
+ *
+ * @ORM
+ * @Column
+ * @ColumnResult
+ * @Cache
+ * @ChangeTrackingPolicy
+ * @CustomIdGenerator
+ * @DiscriminatorColumn
+ * @DiscriminatorMap
+ * @Embeddable
+ * @Embedded
+ * @Entity
+ * @EntityResult
+ * @FieldResult
+ * @GeneratedValue
+ * @HasLifecycleCallbacks
+ * @Index
+ * @Id
+ * @InheritanceType
+ * @JoinColumn
+ * @JoinColumns
+ * @JoinTable
+ * @ManyToOne
+ * @ManyToMany
+ * @MappedSuperclass
+ * @NamedNativeQuery
+ * @OneToOne
+ * @OneToMany
+ * @OrderBy
+ * @PostLoad
+ * @PostPersist
+ * @PostRemove
+ * @PostUpdate
+ * @PrePersist
+ * @PreRemove
+ * @PreUpdate
+ * @SequenceGenerator
+ * @SqlResultSetMapping
+ * @Table
+ * @UniqueConstraint
+ * @Version
+ *
+ * @Target
+ * 
+ * @Required
+ * @required
+ *
+ * @Route
+ * @Method
+ * @ParamConverter
+ * @Template
+ * @Cache
+ * @Security
+ * @IsGranted
+ */
 class PHPMinify
 {
     protected $stmtStack = array();
@@ -308,7 +365,6 @@ class PHPMinify
     protected function isTokenNeedpad($token)
     {
         switch($token->id) {
-        case T_NS_SEPARATOR:             // \ 
         case T_AND_EQUAL:                // &=
         case T_BOOLEAN_AND:              // &&
         case T_BOOLEAN_OR:               // ||
@@ -323,18 +379,20 @@ class PHPMinify
         case T_IS_EQUAL:                 // ==
         case T_IS_GREATER_OR_EQUAL:      // >=
         case T_IS_IDENTICAL:             // ===
-        case T_IS_NOT_EQUAL:             // != or <>
+        case T_IS_NOT_EQUAL:             // !=,<>
         case T_IS_NOT_IDENTICAL:         // !==
         case T_IS_SMALLER_OR_EQUAL:      // <=
         case T_MINUS_EQUAL:              // -=
         case T_MOD_EQUAL:                // %=
         case T_MUL_EQUAL:                // *=
+        case T_NS_SEPARATOR:             // \ 
         case T_OBJECT_OPERATOR:          // ->
         case T_OR_EQUAL:                 // |=
         case T_PAAMAYIM_NEKUDOTAYIM:     // ::
         case T_PLUS_EQUAL:               // +=
         case T_SL:                       // <<
         case T_SL_EQUAL:                 // <<=
+        case T_SPACESHIP:                // <=>
         case T_SR:                       // >>
         case T_SR_EQUAL:                 // >>=
         case T_XOR_EQUAL:                // ^=
@@ -345,14 +403,14 @@ class PHPMinify
         case T_OBJECT_CAST:              // (object)
         case T_STRING_CAST:              // (string)
         case T_UNSET_CAST:               // (unset)
-        case T_CONSTANT_ENCAPSED_STRING:
-        case T_ENCAPSED_AND_WHITESPACE:
         case T_OPEN_TAG:                 // <?php
         case T_OPEN_TAG_WITH_ECHO:       // <?=
-        case T_CLOSE_TAG:                // ?\>
-        case T_DOC_COMMENT:
-        case T_START_HEREDOC:
-        case T_END_HEREDOC:
+        case T_CLOSE_TAG:                // ? >
+        case T_DOC_COMMENT:              // /** ... */
+        case T_START_HEREDOC:            // <<<EOF
+        case T_END_HEREDOC:              // EOF
+        case T_CONSTANT_ENCAPSED_STRING:
+        case T_ENCAPSED_AND_WHITESPACE:
         case -1:
             return false;
         default:
