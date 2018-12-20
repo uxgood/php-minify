@@ -61,35 +61,40 @@
 class PHPMinify
 {
     protected $stmtStack = array();
+    protected $funcStack = array();
 
-    protected $origTokens = array();
+    protected $tokens = array();
     protected $newTokens = array();
 
-    protected $keepNewline = false;
-    protected $keepDocComment = false;
-    protected $keepEmptyBlock = false;
+    protected $newSymbols = array();
 
-    public function __construct($keepNewline = false, $keepDocComment = false, $keepEmptyBlock = false)
+    protected $noNewline = false;
+    protected $noDocComment = true;
+    protected $noEmptyBlock = true;
+    protected $miniLocalSymbol = false;
+
+    public function __construct($noNewline = false, $noDocComment = true, $noEmptyBlock = true, $miniLocalSymbol = false)
     {
-        $this->keepNewline = $keepNewline;
-        $this->keepDocComment = $keepDocComment;
-        $this->keepEmptyBlock = $keepEmptyBlock;
+        $this->noNewline = $noNewline;
+        $this->noDocComment = $noDocComment;
+        $this->noEmptyBlock = $noEmptyBlock;
+        $this->miniLocalSymbol = $miniLocalSymbol;
     }
 
     public function minifyDir($path)
     {
         if(!file_exists($path)) {
-            echo 'not found: ' . $path . "\n";
+            echo '// not found: ' . $path . "\n";
             return false;
         }
         if(is_file($path)) {
             return $this->minifyFile($path);
         }
         if(!($dh = opendir($path))) {
-            echo 'not open: ' . $path . "\n";
+            echo '// not open: ' . $path . "\n";
             return false;
         }
-        echo 'minify: ' . $path . "\n";
+        echo '// minify: ' . $path . "\n";
         while (($name = readdir($dh)) !== false) {
             if ($name == '.' || $name == '..') {
                 continue;
@@ -102,77 +107,102 @@ class PHPMinify
     public function minifyFile($name)
     {
         if(!file_exists($name)) {
-            echo 'not found: ' . $name . "\n";
+            echo '// not found: ' . $name . "\n";
             return false;
         }
         if( pathinfo($name, PATHINFO_EXTENSION ) != 'php'){
-            echo 'skip: ' . $name . "\n";
+            echo '// skip: ' . $name . "\n";
             return false;
         }
-        echo 'minify: ' . $name . "\n";
+        echo '// minify: ' . $name . "\n";
         $text = file_get_contents($name);
         $text = $this->minify($text);
         /**
-        echo "+++++++++++++++++++++++++++++++++++\n";
+        //print_r($this->tokens);
+        //print_r($this->newTokens);
+        echo "// +++++++++++++++++++++++++++++++++++\n";
         echo $text;
-        echo "-----------------------------------\n";
+        echo "// -----------------------------------\n";
         /*/
-        
         return file_put_contents($name, $text);
         //*/
     }
 
+    public function __toString()
+    {
+        return getCode();
+    }
+
     public function minify($text)
     {
-        $this->origTokens = token_get_all($text);
+        $this->setCode($text);
+        $this->process();
+        return $this->getCode();
+    }
+
+    public function setCode($text)
+    {
+        $this->tokens = token_get_all($text);
         $this->newTokens = array();
         $this->stmtStack = array();
-        $stmt = null;
+        $this->newSymbols = array();
+    }
+
+    public function getCode()
+    {
+        $text = '';
+        foreach($this->newTokens as $token) {
+            $text .= $token->text . $token->rpad;
+        }
+        return $text;
+    }
+
+    public function process()
+    {
+        $stmt=null;
         while($token = $this->getToken()) {
+            $stmt2 = $this->topStmt();
+            $token2 = $this->topToken();
             switch($token->id) {
             case T_DOC_COMMENT:              //
-                if($this->keepDocComment || preg_match('/ @[A-Z]| @required/', $token->text)) {
-                    if($this->keepNewline) {
+                if(!$this->noDocComment || preg_match('/ @[A-Z]| @required/', $token->text)) {
+                    if(!$this->noNewline) {
                         $token->rpad = "\n";
+                    }
+                    if(!empty($token2)) {
+                        $token2->rpad = "\n";
                     }
                     break;
                 }
-            case T_COMMENT:                  // 
+            case T_COMMENT:                  //
             case T_WHITESPACE:               // \t\r\n\x20
-                continue 2;
+                continue 2;                  // ignore white space and comment
             case T_OPEN_TAG:                 // <?php
             case T_OPEN_TAG_WITH_ECHO:       // <?=
-            case T_START_HEREDOC:            // <<<\EOF
+            case T_START_HEREDOC:            // <<<EOF
                 $this->pushStmt($token->id);
-                $this->fixToken($token);
                 break;
-            case T_CLOSE_TAG:                // ?\>
-                $stmt2 = $this->popStmt();
-                if($token2 = $this->popToken()) {
-                    if($token2->id == T_OPEN_TAG || $token2->id == T_OPEN_TAG_WITH_ECHO) {
-                        if(!$this->keepEmptyBlock) {
-                            continue 2;
-                        }
+            case T_CLOSE_TAG:                // ? >
+                $this->popStmt();
+                if($token2) {
+                    if($this->noEmptyBlock && ($token2->id == T_OPEN_TAG || $token2->id == T_OPEN_TAG_WITH_ECHO)) {
+                        $this->popToken();
+                        continue 2;
                     }
-                    if($token2->id != -1 || $token2->text != ';' || $stmt2 != T_OPEN_TAG_WITH_ECHO) {
-                        $this->pushToken($token2);
+                    if($token2->id == ';' && $stmt2 == T_OPEN_TAG_WITH_ECHO) {
+                        $this->popToken();
                     }
                 }
-                $this->fixToken($token);
                 break;
             case T_END_HEREDOC:              // EOF
-                $stmt2 = $this->popStmt();
-                $this->fixToken($token);
+                $this->popStmt();
                 break;
             case T_ELSE:                     // else
             case T_ELSEIF:                   // elseif
             case T_CATCH:                    // catch
             case T_FINALLY:                  // finally
-                if($token2 = $this->popToken()) {
-                    if($token2->id == -1 && $token2->text == '}') {
-                        $token2->rpad = '';
-                    }
-                    $this->pushToken($token2);
+                if($token2 && $token2->text == '}') {
+                    $token2->rpad = '';
                 }
             case T_DECLARE:                  // declare
             case T_NAMESPACE:                // namespace
@@ -193,110 +223,91 @@ class PHPMinify
             case T_DOLLAR_OPEN_CURLY_BRACES: // ${
                 $this->pushStmt('{');
                 break;
-            case -1:                         // xxx
-                if($token->text == '{') {
-                    if($stmt != '') {
-                        $this->pushStmt($stmt);
-                        if($this->keepNewline) {
-                            $token->rpad = "\n";
-                        }
-                        $stmt = '';
-                    } else {
-                        $this->pushStmt('{');
-                    }
-                } elseif($token->text == '}') {
-                    $stmt2 = $this->popStmt();
-                    if($stmt2 != '{' && $this->keepNewline) {
+            case '{':
+                if(empty($stmt)) {
+                    $this->pushStmt('{');
+                } else {
+                    $this->pushStmt($stmt);
+                    if(!$this->noNewline) {
                         $token->rpad = "\n";
-                        break;
                     }
-                    if($token2 = $this->popToken()) {
-                        if($token2->id == -1 && $token2->text == '{') {
-                            $token2->rpad = '';
-                        }
-                        $this->pushToken($token2);
-                    }
-                } elseif($token->text == ';') {
-                    if($stmt != T_FOR) {
-                        $stmt = '';
-                        if($token2 = $this->popToken()) {
-                            if($token2->id == -1) {
-                                if($token2->text == ';') {
-                                    $this->pushToken($token2);
-                                    continue 2;
-                                } elseif ($token2->text == '}') {
-                                    $token2->rpad = '';
-                                }
-                            }
-                            $this->pushToken($token2);
-                        }
-                        if($this->keepNewline) {
-                            $token->rpad = "\n";
-                        }
-                    }
-                } elseif($token->text == '"') {
-                    $stmt2 = $this->popStmt();
-                    if($stmt2 != '"') {
-                        $this->pushStmt($stmt2);
-                        $this->pushStmt('"');
-                    }
-                } elseif($token->text == '?') {
+                    $stmt = null;
+                }
+                break;
+            case '}':
+                if($token2 && $token2->id == '{') {
+                    $token2->rpad = '';
+                }
+                if($stmt2 != '{' && !$this->noNewline) {
+                    $token->rpad = "\n";
+                }
+                $this->popStmt();
+                break;
+            case ';':
+                if($stmt2 == '(') {
+                    break;
+                }
+                $stmt = null;
+                if($token2 && $token2->id == ';') {
+                    continue 2;
+                }
+                if($token2 && $token2->id == '}') {
+                    $token2->rpad = '';
+                }
+                if(!$this->noNewline) {
+                    $token->rpad = "\n";
+                }
+                break;
+            case '"':
+                if($stmt2 == '"') {
+                    $this->popStmt();
+                } else {
+                    $this->pushStmt('"');
+                }
+                break;
+            case '?':
+                if($stmt != T_FUNCTION) {
                     $this->pushStmt('?');
-                } elseif($token->text == ':') {
-                    $stmt2 = $this->popStmt();
-                    if($stmt2 != '?' && $stmt != T_FUNCTION) {
-                        $this->pushStmt($stmt2);
-                        if($this->keepNewline) {
-                            $token->rpad = "\n";
-                        }
-                    }
-                } elseif($token->text == ',' || $token->text == ')') {
-                    if($token2 = $this->popToken()) {
-                        if($token2->id == -1 && $token2->text == '}') {
-                            $token2->rpad = '';
-                        }
-                        $this->pushToken($token2);
-                    }
+                }
+                break;
+            case ':':
+                if($stmt2 == '?') {
+                    $this->popStmt();
+                }elseif($stmt != T_FUNCTION && !$this->noNewline) {
+                    $token->rpad = "\n";
+                }
+                break;
+            case '(':
+                $this->pushStmt('(');
+                break;
+            case ')':
+                if($stmt2 == '(') {
+                    $this->popStmt();
+                }
+            case ',':
+                if($token2 && $token2->id == '}') {
+                    $token2->rpad = '';
                 }
                 break;
             default:
                 break;
             }
-            if($token->id == T_DOC_COMMENT) {
-                if($token2 = $this->popToken()) {
-                    $token2->rpad = "\n";
-                    $this->pushToken($token2);
-                }
-            }
-            if($token->needpad && $token->id != T_VARIABLE) {
-                if($token2 = $this->popToken()) {
-                    if($token2->needpad && $token2->id != T_LNUMBER && $token2->id != T_DNUMBER && $token2->rpad == '') {
-                        $token2->rpad = ' ';
-                    }
-                    $this->pushToken($token2);
-                }
+            if($token->sticky && $token->id != T_VARIABLE &&
+                $token2 && $token2->sticky && $token2->id != T_LNUMBER &&
+                $token2->id != T_DNUMBER && $token2->rpad == '') {
+                    $token2->rpad = ' ';
             }
             $this->pushToken($token);
         }
-        return $this->__toString();
-    }
-
-    public function __toString()
-    {
-        $text = '';
-        foreach($this->newTokens as $token) {
-            $text .= $token->text . $token->rpad;
-        }
-        return $text;
     }
 
     protected function getToken()
     {
-        $token = current($this->origTokens);
+        $token = current($this->tokens);
         if(empty($token)) {
             return false;
         }
-        next($this->origTokens);
+        next($this->tokens);
         $newToken = new StdClass();
         if(is_array($token)) {
             $newToken->id = $token[0];
@@ -304,15 +315,52 @@ class PHPMinify
             $newToken->text = $token[1];
             $newToken->line = $token[2];
         } else {
-            $newToken->id = -1;
+            $newToken->id = $token;
             $newToken->text = $token;
         }
         $newToken->rpad = '';
-        $newToken->needpad = $this->isTokenNeedpad($newToken);
+        $newToken->sticky = $this->isTokenSticky($newToken);
         return $newToken;
-
     }
 
+    protected function getSymbol($text)
+    {
+        if(!array_key_exists($text, $this->newSymbols)) {
+            $num = count($this->newSymbols);
+            if($num < 26) {
+                $this->newSymbols[$text] = chr($num + 97);
+            } elseif($num < 702) {
+                $this->newSymbols[$text] = chr(floor($num/26-1) + 97) . chr($num%26 + 97);
+            } elseif($num < 18278) {
+                $this->newSymbols[$text] = chr(floor(($num-26)/676-1) + 97) . chr(floor($num/26-1)%26 + 97) . chr($num%26 + 97);
+            } else {
+                $this->newSymbols[$text] = 'a' . ($num - 18278);
+            }
+        }
+        return $this->newSymbols[$text];
+    }
+
+    protected function pushFunc($func)
+    {
+        if(empty($func)) {
+            return false;
+        }
+        return array_push($this->funcStack, $func);
+    }
+
+    protected function popFunc()
+    {
+        $func = array_pop($this->funcStack);
+        if(empty($this->funcStack)) {
+            $this->newSymbols = array();
+        }
+        return $func;
+    }
+
+    protected function topFunc()
+    {
+        return end($this->funcStack);
+    }
     protected function pushToken($token)
     {
         if(empty($token)) {
@@ -324,6 +372,11 @@ class PHPMinify
     protected function popToken()
     {
         return array_pop($this->newTokens);
+    }
+
+    protected function topToken()
+    {
+        return end($this->newTokens);
     }
 
     protected function pushStmt($stmt)
@@ -339,30 +392,12 @@ class PHPMinify
         return array_pop($this->stmtStack);
     }
 
-    protected function fixToken($token)
+    protected function topStmt()
     {
-        switch($token->id) {
-        case T_CLOSE_TAG:
-        case T_OPEN_TAG_WITH_ECHO:
-            $token->text = trim($token->text);
-            break;
-        case T_OPEN_TAG:
-            $token->text = trim($token->text) . ($this->keepNewline?"\n":" ");
-            break;
-        case T_START_HEREDOC:
-            $token->text = trim($token->text) . "\n";
-            break;
-        case T_END_HEREDOC:
-            $token->text = "\n" . trim($token->text);
-            break;
-        case T_DOC_COMMENT:
-        default:
-            break;
-        }
-        return $token; 
+        return end($this->stmtStack);
     }
 
-    protected function isTokenNeedpad($token)
+    protected function isTokenSticky($token)
     {
         switch($token->id) {
         case T_AND_EQUAL:                // &=
@@ -411,10 +446,9 @@ class PHPMinify
         case T_END_HEREDOC:              // EOF
         case T_CONSTANT_ENCAPSED_STRING:
         case T_ENCAPSED_AND_WHITESPACE:
-        case -1:
             return false;
         default:
-            return true;
+            return !is_string($token->id);
         }
     }
 }
@@ -425,7 +459,7 @@ class PHPMinify
         echo $argv[0] . " filename\n";
         return false;
     }
-    $minify = new PHPMinify(0, 0, 0);
+    $minify = new PHPMinify(0, 1, 1, 1);
     for($i = 1; $i < $argc; $i ++) {
         $minify->minifyDir($argv[$i]);
     }
