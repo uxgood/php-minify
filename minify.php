@@ -60,6 +60,10 @@
  */
 class PHPMinify
 {
+    const PHPDOC = 'abstract|api|author|bar|category|copyright|deprecated|domain|example'.
+        '|experimental|final|filesource|global|foo|forbar|ignore|internal|inheritdoc|inheritDoc'.
+        '|license|link|method|override|package|param|private|property|return|see|since|source'.
+        '|src|subpackage|test|throws|todo|TODO|uses|var|version';
     protected $stmtStack = array();
     protected $funcStack = array();
 
@@ -165,15 +169,24 @@ class PHPMinify
             $token2 = $this->topToken();
             switch($token->id) {
             case T_DOC_COMMENT:              //
-                if(!$this->noDocComment || preg_match('/ @[A-Z]| @required/', $token->text)) {
-                    if(!$this->noNewline) {
-                        $token->rpad = "\n";
+                if($this->noDocComment) {
+                    $token->text = preg_replace('/^\s*\*\s*@(' . self::PHPDOC . ').*$/m', '', $token->text);
+                    if(!preg_match('/^\s*\*\s*@[a-zA-Z]/m', $token->text)) {
+                        continue 2;
                     }
-                    if(!empty($token2)) {
-                        $token2->rpad = "\n";
-                    }
-                    break;
+                    $token->text = preg_replace('/^\s+/m', '', $token->text);
+                    $token->text = preg_replace('/^\*\s*\w.*$/m', '', $token->text);
+                    $token->text = preg_replace('/\s+$/m', '', $token->text);
+                    $token->text = preg_replace('/^\*$/m', '', $token->text);
+                    $token->text = preg_replace('/\n+/', "\n", $token->text);
                 }
+                if(!$this->noNewline) {
+                    $token->rpad = "\n";
+                }
+                if(!empty($token2)) {
+                    $token2->rpad = "\n";
+                }
+                break;
             case T_COMMENT:                  //
             case T_WHITESPACE:               // \t\r\n\x20
                 continue 2;                  // ignore white space and comment
@@ -453,14 +466,37 @@ class PHPMinify
     }
 }
 
-(function($argv) {
-    $argc = count($argv);
-    if($argc <= 1) {
+(function($argc, $argv) {
+    array_shift($argv);
+    $argc --;
+    if($argc <= 0) {
         echo $argv[0] . " filename\n";
         return false;
     }
-    $minify = new PHPMinify(0, 1, 1, 1);
-    for($i = 1; $i < $argc; $i ++) {
-        $minify->minifyDir($argv[$i]);
+    $nonewline = false;
+    $nodoccomment = true;
+    $noemptyblock = true;
+    $minilocalsymbol = false;
+    for($i = 0; $i < $argc; $i ++) {
+        switch($argv[$i]) {
+        case '--newline':
+        case '--doc-comment':
+        case '--empty-block':
+            ${'no' . str_replace('-', '', $argv[$i])} = false;
+            break;
+        case '--mini-local-symbol':
+        case '--no-doc-comment':
+        case '--no-empty-block':
+        case '--no-newline':
+            ${str_replace('-', '', $argv[$i])} = true;
+            break;
+        default: continue 2;
+        }
+        unset($argv[$i]);
     }
-})($argv);
+    //PHPMinify::__construct($noNewline = false, $noDocComment = true, $noEmptyBlock = true, $miniLocalSymbol = false)
+    $minify = new PHPMinify($nonewline, $nodoccomment, $noemptyblock, $minilocalsymbol);
+    foreach($argv as $arg) {
+        $minify->minifyDir($arg);
+    }
+})($argc, $argv);
