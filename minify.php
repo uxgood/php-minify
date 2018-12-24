@@ -1,63 +1,6 @@
 #!/usr/bin/env php
 <?php
 
-/**
- * @Annotation
- *
- * @ORM
- * @Column
- * @ColumnResult
- * @Cache
- * @ChangeTrackingPolicy
- * @CustomIdGenerator
- * @DiscriminatorColumn
- * @DiscriminatorMap
- * @Embeddable
- * @Embedded
- * @Entity
- * @EntityResult
- * @FieldResult
- * @GeneratedValue
- * @HasLifecycleCallbacks
- * @Index
- * @Id
- * @InheritanceType
- * @JoinColumn
- * @JoinColumns
- * @JoinTable
- * @ManyToOne
- * @ManyToMany
- * @MappedSuperclass
- * @NamedNativeQuery
- * @OneToOne
- * @OneToMany
- * @OrderBy
- * @PostLoad
- * @PostPersist
- * @PostRemove
- * @PostUpdate
- * @PrePersist
- * @PreRemove
- * @PreUpdate
- * @SequenceGenerator
- * @SqlResultSetMapping
- * @Table
- * @UniqueConstraint
- * @Version
- *
- * @Target
- * 
- * @Required
- * @required
- *
- * @Route
- * @Method
- * @ParamConverter
- * @Template
- * @Cache
- * @Security
- * @IsGranted
- */
 class PHPMinify
 {
     const PHPDOC = 'abstract|api|author|bar|category|copyright|deprecated|domain|example'.
@@ -70,19 +13,19 @@ class PHPMinify
     protected $tokens = array();
     protected $newTokens = array();
 
-    protected $newSymbols = array();
+    protected $mapTokens = array();
 
     protected $noNewline = false;
     protected $noDocComment = true;
     protected $noEmptyBlock = true;
-    protected $miniLocalSymbol = false;
+    protected $minifyMore = false;
 
-    public function __construct($noNewline = false, $noDocComment = true, $noEmptyBlock = true, $miniLocalSymbol = false)
+    public function __construct($noNewline = false, $noDocComment = true, $noEmptyBlock = true, $minifyMore = false)
     {
         $this->noNewline = $noNewline;
         $this->noDocComment = $noDocComment;
         $this->noEmptyBlock = $noEmptyBlock;
-        $this->miniLocalSymbol = $miniLocalSymbol;
+        $this->minifyMore = $minifyMore;
     }
 
     public function minifyDir($path)
@@ -140,7 +83,10 @@ class PHPMinify
     public function minify($text)
     {
         $this->setCode($text);
-        $this->process();
+        $this->minifyCode();
+        if($this->minifyMore) {
+            return $this->getCode($this->minifyToken());
+        }
         return $this->getCode();
     }
 
@@ -149,19 +95,23 @@ class PHPMinify
         $this->tokens = token_get_all($text);
         $this->newTokens = array();
         $this->stmtStack = array();
-        $this->newSymbols = array();
+        $this->mapTokens = array();
     }
 
-    public function getCode()
+    public function getCode($text2 = false)
     {
         $text = '';
         foreach($this->newTokens as $token) {
-            $text .= $token->text . $token->rpad;
+            if($text2 && isset($token->text2)) {
+                $text .= $token->text2 . $token->rpad;
+            } else {
+                $text .= $token->text . $token->rpad;
+            }
         }
         return $text;
     }
 
-    public function process()
+    public function minifyCode()
     {
         $stmt=null;
         while($token = $this->getToken()) {
@@ -314,6 +264,62 @@ class PHPMinify
         }
     }
 
+    protected function minifyToken()
+    {
+        $this->stmtStack = array();
+        foreach($this->newTokens as &$token) {
+            if(empty($this->topStmt())) {
+                if($token->id == T_DOLLAR_OPEN_CURLY_BRACES || $token->id == '$') {
+                    $this->pushStmt($token->id);
+                }elseif($token->id == T_VARIABLE) {
+                    $token->text2 = '$' . $this->getNewToken(substr($token->text, 1));
+                }
+                continue;
+            }
+            if($this->topStmt() == '[' && $token->id != ']') {
+                continue;
+            }
+            if($token->id == '{') {
+                if($this->topStmt() == '$') {
+                    $this->pushStmt('${');
+                } else {
+                    $this->pushStmt('{');
+                }
+            }elseif($token->id == '}') {
+                $this->popStmt();
+                if($this->topStmt() == '$') {
+                    $this->popStmt();
+                }
+            }elseif($token->id == ']') {
+                $this->popStmt();
+            }elseif($token->id == '[') {
+                $this->pushStmt($token->id);
+            //}elseif($token->id == T_VARIABLE) {
+            //    $token->text2 = '$' . $this->getNewToken(substr($token->text, 1));
+            }elseif($token->id == T_STRING_VARNAME) {
+                $token->text2 = $this->getNewToken($token->text);
+            }elseif($token->id == T_CONSTANT_ENCAPSED_STRING) {
+                $token->text2 = $this->getNewToken(stripcslashes(substr($token->text, 1, -1)));
+                if($this->topStmt() != T_DOLLAR_OPEN_CURLY_BRACES) {
+                    $token->text2 = "'" . $token->text2 . "'";
+                }
+            }elseif($token->id == T_DNUMBER) {
+                $token->text2 = $this->getNewToken($token->text + 0);
+                if($this->topStmt() != T_DOLLAR_OPEN_CURLY_BRACES) {
+                    $token->text2 = "'" . $token->text2 . "'";
+                }
+            }elseif($token->id == T_LNUMBER) {
+                $token->text2 = $this->getNewToken($token->text + 0);
+                if($this->topStmt() != T_DOLLAR_OPEN_CURLY_BRACES) {
+                    $token->text2 = "'" . $token->text2 . "'";
+                }
+            }else{
+                return false;
+            }
+        }
+        return true;
+    }
+
     protected function getToken()
     {
         $token = current($this->tokens);
@@ -330,27 +336,47 @@ class PHPMinify
         } else {
             $newToken->id = $token;
             $newToken->text = $token;
+            $newToken->line = 0;
+            $newToken->name = $token;
         }
         $newToken->rpad = '';
         $newToken->sticky = $this->isTokenSticky($newToken);
         return $newToken;
     }
 
-    protected function getSymbol($text)
+    protected function getNewToken($text)
     {
-        if(!array_key_exists($text, $this->newSymbols)) {
-            $num = count($this->newSymbols);
+        $text = (string) $text;
+        switch($text) {
+        case 'GLOBALS':
+        case '_SERVER':
+        case '_GET':
+        case '_POST':
+        case '_FILES':
+        case '_REQUEST':
+        case '_SESSION':
+        case '_ENV':
+        case '_COOKIE':
+        case 'php_errormsg':
+        case 'HTTP_RAW_POST_DATA':
+        case 'http_response_header':
+        case 'argc':
+        case 'argv':
+            return $text;
+        }
+        if(!array_key_exists($text, $this->mapTokens)) {
+            $num = count($this->mapTokens);
             if($num < 26) {
-                $this->newSymbols[$text] = chr($num + 97);
+                $this->mapTokens[$text] = chr($num + 97);
             } elseif($num < 702) {
-                $this->newSymbols[$text] = chr(floor($num/26-1) + 97) . chr($num%26 + 97);
+                $this->mapTokens[$text] = chr(floor($num/26-1) + 97) . chr($num%26 + 97);
             } elseif($num < 18278) {
-                $this->newSymbols[$text] = chr(floor(($num-26)/676-1) + 97) . chr(floor($num/26-1)%26 + 97) . chr($num%26 + 97);
+                $this->mapTokens[$text] = chr(floor(($num-26)/676-1) + 97) . chr(floor($num/26-1)%26 + 97) . chr($num%26 + 97);
             } else {
-                $this->newSymbols[$text] = 'a' . ($num - 18278);
+                $this->mapTokens[$text] = 'a' . ($num - 18278);
             }
         }
-        return $this->newSymbols[$text];
+        return $this->mapTokens[$text];
     }
 
     protected function pushFunc($func)
@@ -365,7 +391,7 @@ class PHPMinify
     {
         $func = array_pop($this->funcStack);
         if(empty($this->funcStack)) {
-            $this->newSymbols = array();
+            $this->mapTokens = array();
         }
         return $func;
     }
@@ -467,16 +493,16 @@ class PHPMinify
 }
 
 (function($argc, $argv) {
-    array_shift($argv);
-    $argc --;
     if($argc <= 0) {
         echo $argv[0] . " filename\n";
         return false;
     }
+    array_shift($argv);
+    $argc --;
     $nonewline = false;
     $nodoccomment = true;
     $noemptyblock = true;
-    $minilocalsymbol = false;
+    $minifymore = false;
     for($i = 0; $i < $argc; $i ++) {
         switch($argv[$i]) {
         case '--newline':
@@ -484,7 +510,7 @@ class PHPMinify
         case '--empty-block':
             ${'no' . str_replace('-', '', $argv[$i])} = false;
             break;
-        case '--mini-local-symbol':
+        case '--minify-more':
         case '--no-doc-comment':
         case '--no-empty-block':
         case '--no-newline':
@@ -494,8 +520,8 @@ class PHPMinify
         }
         unset($argv[$i]);
     }
-    //PHPMinify::__construct($noNewline = false, $noDocComment = true, $noEmptyBlock = true, $miniLocalSymbol = false)
-    $minify = new PHPMinify($nonewline, $nodoccomment, $noemptyblock, $minilocalsymbol);
+    //PHPMinify::__construct($noNewline = false, $noDocComment = true, $noEmptyBlock = true, $minifyMore = false)
+    $minify = new PHPMinify($nonewline, $nodoccomment, $noemptyblock, $minifymore);
     foreach($argv as $arg) {
         $minify->minifyDir($arg);
     }
