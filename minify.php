@@ -95,6 +95,7 @@ class PHPMinify
         $this->tokens = token_get_all($text);
         $this->newTokens = array();
         $this->stmtStack = array();
+        $this->funcStack = array();
         $this->mapTokens = array();
     }
 
@@ -267,7 +268,57 @@ class PHPMinify
     protected function minifyToken()
     {
         $this->stmtStack = array();
+
         foreach($this->newTokens as &$token) {
+            if($this->topFunc() == T_USE) {
+                $this->popFunc();
+                continue;
+            }
+
+            if($token->id == T_USE) {
+                $this->pushFunc($token->id);
+                continue;
+            }
+
+            if($token->id == T_FUNCTION) {
+                $this->pushFunc($token->id);
+                continue;
+            }
+ 
+            if(empty($this->topFunc())) {
+               continue;
+            }
+
+            //if($token->id == T_STRING && $this->topFunc() == T_FUNCTION) {
+            //    if(substr($token->text, -6) == 'Action') {
+            //        $this->pushFunc('Action');
+            //    } elseif(substr($token->text, 0, 5) == 'twig_') {
+            //        $this->pushFunc('twig');
+            //    }
+            //    continue;
+            //}
+
+            if($token->id == '{' || $token->id == T_CURLY_OPEN || $token->id == T_DOLLAR_OPEN_CURLY_BRACES) {
+                //if($this->topFunc() == 'Action' || $this->topFunc() == 'twig') {
+                //    $this->popFunc();
+                //}
+                $this->pushFunc($token->id);
+            } elseif($token->id == '}') {
+                $this->popFunc();
+            }
+
+            if($this->topStmt() == T_DOUBLE_COLON) {
+                $this->popStmt();
+                //if($token->id == T_DOLLAR_OPEN_CURLY_BRACES) {
+                //    $this->pushStmt('{');
+                //}
+                continue;
+            }
+            if($token->id == T_DOUBLE_COLON) {
+                //echo "$token->name-$token->line\n";
+                $this->pushStmt($token->id);
+                continue;
+            }
             if(empty($this->topStmt())) {
                 if($token->id == T_DOLLAR_OPEN_CURLY_BRACES || $token->id == '$') {
                     $this->pushStmt($token->id);
@@ -362,9 +413,19 @@ class PHPMinify
         case 'http_response_header':
         case 'argc':
         case 'argv':
+        case 'this':
+        //case 'method':
             return $text;
         }
         if(!array_key_exists($text, $this->mapTokens)) {
+            //if($this->topFunc() == T_FUNCTION) {
+            //    $this->mapTokens[$text] = $text;
+            //    return $text;
+            //}
+            //if($this->topFunc() == 'Action' || $this->topFunc() == 'twig') {
+            //    $this->mapTokens[$text] = $text;
+            //    return $text;
+            //}
             $num = count($this->mapTokens);
             if($num < 26) {
                 $this->mapTokens[$text] = chr($num + 97);
@@ -444,6 +505,7 @@ class PHPMinify
         case T_BOOLEAN_OR:               // ||
         case T_COALESCE:                 // ??
         case T_CONCAT_EQUAL:             // .=
+        case T_CURLY_OPEN:               // {
         case T_DEC:                      // --
         case T_DIV_EQUAL:                // /=
         case T_DOLLAR_OPEN_CURLY_BRACES: // ${
