@@ -54,6 +54,7 @@ namespace a\b\c
         $x=array(12);
         echo "\n" . __LINE__ . ':' . "{$x[0]}";
         echo "\n" . __LINE__ . ':' . "${x[0]}";
+        echo "\n" . __LINE__ . ':' . "${'x'[0]}";
         echo "\n" . __LINE__ . ':' . "${'1'[0]}";
         $x = new \StdClass();
         $x->x = 13;
@@ -84,8 +85,10 @@ namespace a\b\c
             echo "\n" . __LINE__ . ':' . $aa;
             echo "\n" . __LINE__ . ':' . $bb;
         })(18, 19);
+        echo "\n" . __LINE__ . ':' . 20.1 . '';
     }
-    a(20, 21);
+    a(21, 22);
+    echo "\n";
 }
 namespace a\b\d
 {

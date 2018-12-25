@@ -19,13 +19,15 @@ class PHPMinify
     protected $noDocComment = true;
     protected $noEmptyBlock = true;
     protected $minifyMore = false;
+    protected $fixLineno = false;
 
-    public function __construct($noNewline = false, $noDocComment = true, $noEmptyBlock = true, $minifyMore = false)
+    public function __construct($noNewline = false, $noDocComment = true, $noEmptyBlock = true, $minifyMore = false, $fixLineno)
     {
         $this->noNewline = $noNewline;
         $this->noDocComment = $noDocComment;
         $this->noEmptyBlock = $noEmptyBlock;
         $this->minifyMore = $minifyMore;
+        $this->fixLineno = $fixLineno;
     }
 
     public function minifyDir($path)
@@ -187,6 +189,11 @@ class PHPMinify
             case T_DOLLAR_OPEN_CURLY_BRACES: // ${
                 $this->pushStmt('{');
                 break;
+            case T_LINE:
+                if($this->fixLineno) {
+                    $token->text = $token->line;
+                }
+                break;
             case '{':
                 if(empty($stmt)) {
                     $this->pushStmt('{');
@@ -256,10 +263,16 @@ class PHPMinify
             default:
                 break;
             }
-            if($token->sticky && $token->id != T_VARIABLE &&
-                $token2 && $token2->sticky && $token2->id != T_LNUMBER &&
-                $token2->id != T_DNUMBER && $token2->rpad == '') {
+            if(!empty($token2)) {
+                if($token->sticky && $token->id != T_VARIABLE && $token2->sticky && $token2->id != T_LNUMBER && $token2->id != T_DNUMBER) {
+                        $token2->rpad = ' ';
+                }
+                if($token2->id == '.' && ($token->id == T_DNUMBER || $token->id == T_LNUMBER || ($token->id == T_LINE && $this->fixLineno))) {
                     $token2->rpad = ' ';
+                }
+                if($token->id == '.' && ($token2->id == T_DNUMBER || $token2->id == T_LNUMBER || ($token2->id == T_LINE && $this->fixLineno))) {
+                    $token2->rpad = ' ';
+                }
             }
             $this->pushToken($token);
         }
@@ -565,6 +578,7 @@ class PHPMinify
     $nodoccomment = true;
     $noemptyblock = true;
     $minifymore = false;
+    $fixlineno = false;
     for($i = 0; $i < $argc; $i ++) {
         switch($argv[$i]) {
         case '--newline':
@@ -572,6 +586,7 @@ class PHPMinify
         case '--empty-block':
             ${'no' . str_replace('-', '', $argv[$i])} = false;
             break;
+        case '--fix-lineno':
         case '--minify-more':
         case '--no-doc-comment':
         case '--no-empty-block':
@@ -583,7 +598,7 @@ class PHPMinify
         unset($argv[$i]);
     }
     //PHPMinify::__construct($noNewline = false, $noDocComment = true, $noEmptyBlock = true, $minifyMore = false)
-    $minify = new PHPMinify($nonewline, $nodoccomment, $noemptyblock, $minifymore);
+    $minify = new PHPMinify($nonewline, $nodoccomment, $noemptyblock, $minifymore, $fixlineno);
     foreach($argv as $arg) {
         $minify->minifyDir($arg);
     }
